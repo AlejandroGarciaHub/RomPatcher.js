@@ -1,0 +1,97 @@
+name: Upstream Sync & Container Build
+
+on:
+  schedule:
+    - cron: '0 0 * * *' # Triggers automatically every single day at midnight
+  workflow_dispatch: # Allows you to manually trigger this anytime via the GitHub UI
+
+jobs:
+  sync:
+    name: Sync with Original Repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      has_changes: ${{ steps.sync-check.outputs.has_changes }}
+      upstream_sha: ${{ steps.sync-check.outputs.upstream_sha }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: true
+          fetch-depth: 0
+
+      - name: Configure Git Identity
+        run: |
+          git config user.name "${{ vars.COMMIT_USER_NAME }}"
+          git config user.email "${{ vars.COMMIT_USER_EMAIL }}"
+
+      - name: Fetch and Merge Upstream Updates
+        id: sync-check
+        run: |
+          git remote add upstream "${{ vars.UPSTREAM_REPO_URL }}"
+          git fetch upstream "${{ vars.UPSTREAM_BRANCH }}"
+
+          if ! git log "${{ github.ref_name }}..upstream/${{ vars.UPSTREAM_BRANCH }}" --oneline | grep -q .; then
+            echo "No new updates found upstream. Skipping build cycle."
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "New updates found upstream! Merging code streams..."
+
+            UPSTREAM_SHA=$(git rev-parse --short=8 "upstream/${{ vars.UPSTREAM_BRANCH }}")
+            echo "Upstream commit: $UPSTREAM_SHA"
+            echo "upstream_sha=$UPSTREAM_SHA" >> "$GITHUB_OUTPUT"
+
+            git merge "upstream/${{ vars.UPSTREAM_BRANCH }}" --no-edit
+
+            git push origin "${{ github.ref_name }}"
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    name: Compile and Push to GHCR
+    needs: sync
+    if: ${{ needs.sync.outputs.has_changes == 'true' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout Merged Codebase
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.ref_name }}
+
+      - name: Log into GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Metadata (Tags/Labels)
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/${{ vars.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest
+            type=raw,value=upstream-${{ needs.sync.outputs.upstream_sha }},enable=${{ needs.sync.outputs.upstream_sha != '' }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+  
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
+          provenance: false
+          oci-mediatypes: false
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
