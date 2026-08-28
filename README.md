@@ -1,3 +1,37 @@
+# docker-compose (minimal)
+
+```services:
+  rom-patcher-js:
+    image: ghcr.io/alejandrogarciahub/rom-patcher-js:${IMAGE_TAG}
+    container_name: rom-patcher-js
+    hostname: rom-patcher-js
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+```
+
+Consider that this container handles standard web traffic sent in plain text. Port 80 is used for unencrypted HTTP web traffic. `8080:80` would expose port 80 from inside the container, making it accessible from the host's IP on port 8080 outside the container.
+
+It is recommended to run this container behind a reverse proxy like [https://nginxproxymanager.com](https://nginxproxymanager.com). If you already have NPM running on your machine, just add this block at the end of your `.yml` file to put this container on the same network that NPM uses.
+
+```
+    networks:
+      - net
+networks:
+  net:
+    name: ${NETWORK}
+    external: true
+```
+
+If you do that, you can **remove** the following ports section, as you would no longer need to publish the container's port to the host:
+
+```
+    ports:
+      - "8080:80"
+```
+
+## ---
+
 # Rom Patcher JS
 A ROM patcher made in Javascript.
 
