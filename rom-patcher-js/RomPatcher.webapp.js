@@ -458,7 +458,7 @@ const RomPatcherWeb = (function () {
 		romFile._u8array = event.data.u8array;
 
 		if (WEB_CRYPTO_AVAILABLE) {
-			romFile.hashSHA1().then(function (res) {
+			romFile.hashSHA1(_getChecksumStartOffset()).then(function (res) {
 				htmlElements.setText('span-sha1', res);
 			});
 		}
